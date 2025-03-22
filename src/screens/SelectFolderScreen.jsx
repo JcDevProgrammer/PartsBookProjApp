@@ -11,7 +11,6 @@ import {
   Platform,
 } from "react-native";
 import { ref, listAll, getDownloadURL } from "firebase/storage";
-import { storage } from "../config/firebaseConfig";
 import { WebView } from "react-native-webview";
 import * as Print from "expo-print";
 

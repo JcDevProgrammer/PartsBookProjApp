@@ -17,19 +17,22 @@ import NetInfo from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Print from "expo-print";
 import * as FileSystem from "expo-file-system";
-import { ref, listAll, getDownloadURL } from "firebase/storage";
-import { storage } from "../config/firebaseConfig";
+
+// ========== Import Google Drive functions ==========
+import { getTopLevelItems, getDriveItems } from "../config/googleDrive";
+
 import PdfViewer from "../../components/PdfViewer";
 
+// Render each folder item
 const FolderItem = React.memo(
   ({ item, isExpanded, onToggleFolder, onOpenFile }) => (
     <View style={styles.folderContainer}>
       <TouchableOpacity
         style={styles.folderRow}
-        onPress={() => onToggleFolder(item.folderName)}
+        onPress={() => onToggleFolder(item)}
       >
         <View style={styles.folderHeader}>
-          <Text style={styles.folderTitle}>{item.folderName}</Text>
+          <Text style={styles.folderTitle}>{item.name}</Text>
           {item.files && item.files.length > 0 && (
             <Text style={styles.folderCount}>({item.files.length} items)</Text>
           )}
@@ -51,10 +54,10 @@ const FolderItem = React.memo(
               <TouchableOpacity
                 key={idx}
                 style={styles.fileItem}
-                onPress={() => onOpenFile(f.url)}
+                onPress={() => onOpenFile(f)}
               >
                 <Text style={styles.fileName}>{f.name}</Text>
-                <Text style={styles.filePath}>{f.path}</Text>
+                <Text style={styles.filePath}>{f.id}</Text>
               </TouchableOpacity>
             ))
           ) : (
@@ -68,19 +71,28 @@ const FolderItem = React.memo(
 
 export default function ModelListScreen() {
   const router = useRouter();
+
+  // States for folders + subfolders
   const [topFolders, setTopFolders] = useState([]);
-  const [loadingRoot, setLoadingRoot] = useState(true);
   const [subfolderData, setSubfolderData] = useState({});
-  const [searchQuery, setSearchQuery] = useState("");
+
+  // UI states
+  const [loadingRoot, setLoadingRoot] = useState(true);
   const [expandedFolder, setExpandedFolder] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // PDF Viewing
   const [selectedPdfBase64, setSelectedPdfBase64] = useState(null);
-  const [selectedFileUrl, setSelectedFileUrl] = useState(null);
+
+  // Network, info menu, QR code
   const [isOnline, setIsOnline] = useState(true);
   const [showInfoMenu, setShowInfoMenu] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [showQRCode, setShowQRCode] = useState(false);
+
   const pdfViewerRef = useRef(null);
 
+  // Check network + fetch
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
       const online = state.isConnected && state.isInternetReachable;
@@ -94,27 +106,17 @@ export default function ModelListScreen() {
     return () => unsubscribe();
   }, [isOnline]);
 
-  // Polling mechanism: refresh folders and expanded folder contents every 30 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (isOnline) {
-        fetchTopLevelFolders();
-        if (expandedFolder) {
-          fetchSubfolderContents(expandedFolder);
-        }
-      }
-    }, 30000); // 30 seconds; adjust as needed
-    return () => clearInterval(interval);
-  }, [isOnline, expandedFolder]);
-
+  // Get top-level folders from Google Drive
   const fetchTopLevelFolders = async () => {
     try {
       setLoadingRoot(true);
-      const rootRef = ref(storage, "");
-      const rootResult = await listAll(rootRef);
-      const folderNames = rootResult.prefixes.map((f) => f.name);
-      setTopFolders(folderNames);
-      await AsyncStorage.setItem("@cachedFolders", JSON.stringify(folderNames));
+      const items = await getTopLevelItems();
+      const folderData = items.filter(
+        (it) => it.mimeType === "application/vnd.google-apps.folder"
+      );
+      folderData.sort((a, b) => a.name.localeCompare(b.name));
+      setTopFolders(folderData);
+      await AsyncStorage.setItem("@cachedFolders", JSON.stringify(folderData));
     } catch (error) {
       console.error("Error fetching top-level folders:", error);
     } finally {
@@ -122,6 +124,7 @@ export default function ModelListScreen() {
     }
   };
 
+  // Load cached data if offline
   const loadCachedData = async () => {
     try {
       setLoadingRoot(true);
@@ -136,29 +139,57 @@ export default function ModelListScreen() {
     }
   };
 
-  async function fetchFolderRecursively(prefixRef, depth = 0, maxDepth = 1) {
+  // BFS to get all items
+  async function fetchAllDriveItems(
+    folderId,
+    pageToken = null,
+    accumulated = []
+  ) {
+    const items = await getDriveItems(folderId, pageToken);
+    const newAccumulated = [...accumulated, ...items.files];
+    if (items.nextPageToken) {
+      return fetchAllDriveItems(folderId, items.nextPageToken, newAccumulated);
+    } else {
+      return newAccumulated;
+    }
+  }
+
+  // BFS for subfolders
+  async function fetchFolderRecursively(folderId, depth = 0, maxDepth = 10) {
     try {
-      const result = await listAll(prefixRef);
-      const filePromises = result.items.map(async (itemRef) => {
-        const httpsUrl = await getDownloadURL(itemRef);
-        return { name: itemRef.name, path: itemRef.fullPath, url: httpsUrl };
-      });
-      const files = await Promise.all(filePromises);
+      const allItems = await fetchAllDriveItems(folderId);
+      const files = [];
+      const subfolders = [];
+      for (let it of allItems) {
+        if (it.mimeType === "application/vnd.google-apps.folder") {
+          subfolders.push(it);
+        } else {
+          files.push({
+            name: it.name,
+            id: it.id,
+            url: it.webContentLink,
+          });
+        }
+      }
       if (depth < maxDepth) {
-        const subPromises = result.prefixes.map((subRef) =>
-          fetchFolderRecursively(subRef, depth + 1, maxDepth)
-        );
-        const subFilesArrays = await Promise.all(subPromises);
-        return files.concat(...subFilesArrays);
+        for (let sf of subfolders) {
+          const deeperFiles = await fetchFolderRecursively(
+            sf.id,
+            depth + 1,
+            maxDepth
+          );
+          files.push(...deeperFiles);
+        }
       }
       return files;
     } catch (err) {
-      console.error("Error BFS:", err);
+      console.error("Error BFS in Google Drive:", err);
       return [];
     }
   }
 
-  const fetchSubfolderContents = async (folderName) => {
+  // Get subfolder contents
+  const fetchSubfolderContents = async (folder) => {
     if (!isOnline) {
       Alert.alert("Offline", "No internet. Can't fetch data.");
       return;
@@ -166,37 +197,37 @@ export default function ModelListScreen() {
     try {
       setSubfolderData((prev) => ({
         ...prev,
-        [folderName]: { ...prev[folderName], loading: true },
+        [folder.id]: { ...prev[folder.id], loading: true },
       }));
-      const folderRef = ref(storage, folderName + "/");
-      const files = await fetchFolderRecursively(folderRef);
+      const files = await fetchFolderRecursively(folder.id, 0, 10);
       setSubfolderData((prev) => ({
         ...prev,
-        [folderName]: { files, loading: false, loaded: true },
+        [folder.id]: { files, loading: false, loaded: true },
       }));
       await AsyncStorage.setItem(
-        `@cachedSubfolder_${folderName}`,
+        `@cachedSubfolder_${folder.id}`,
         JSON.stringify(files)
       );
     } catch (error) {
       console.error("Error fetching subfolder:", error);
       setSubfolderData((prev) => ({
         ...prev,
-        [folderName]: { ...prev[folderName], loading: false },
+        [folder.id]: { ...prev[folder.id], loading: false },
       }));
     }
   };
 
-  const loadCachedSubfolder = async (folderName) => {
+  // Load cached subfolder if offline
+  const loadCachedSubfolder = async (folder) => {
     try {
       const cached = await AsyncStorage.getItem(
-        `@cachedSubfolder_${folderName}`
+        `@cachedSubfolder_${folder.id}`
       );
       if (cached) {
         const files = JSON.parse(cached);
         setSubfolderData((prev) => ({
           ...prev,
-          [folderName]: { files, loading: false, loaded: true },
+          [folder.id]: { files, loading: false, loaded: true },
         }));
       } else {
         Alert.alert("Offline", "No cached data for this folder.");
@@ -206,34 +237,36 @@ export default function ModelListScreen() {
     }
   };
 
-  const handleToggleFolder = async (folderName) => {
-    if (expandedFolder === folderName) {
+  // Toggle folder
+  const handleToggleFolder = async (folder) => {
+    if (expandedFolder === folder.id) {
       setExpandedFolder(null);
       return;
     }
-    setExpandedFolder(folderName);
-    const currentData = subfolderData[folderName];
+    setExpandedFolder(folder.id);
+    const currentData = subfolderData[folder.id];
     if (!currentData || !currentData.loaded) {
       if (isOnline) {
-        fetchSubfolderContents(folderName);
+        fetchSubfolderContents(folder);
       } else {
-        await loadCachedSubfolder(folderName);
+        await loadCachedSubfolder(folder);
       }
     }
   };
 
-  const handleOpenFile = async (url) => {
+  // OPEN FILE – always fetch => arrayBuffer => base64 => show pdf.js
+  // (No "Downloading PDF..." overlay in web – so we skip that if web)
+  const handleOpenFile = async (file) => {
     if (!isOnline) {
       Alert.alert("Offline", "Cannot view PDF offline (needs internet).");
       return;
     }
-    if (Platform.OS === "web") {
-      setSelectedFileUrl(url);
-      return;
-    }
+    // Web or mobile, pareho: we do fetch => base64
+    // But we won't show "Downloading PDF" overlay in web
+    const showOverlay = Platform.OS !== "web";
     try {
-      setIsDownloading(true);
-      const response = await fetch(url);
+      if (showOverlay) setIsDownloading(true);
+      const response = await fetch(file.url);
       if (!response.ok)
         throw new Error(`Failed to fetch PDF. Status: ${response.status}`);
       const arrayBuffer = await response.arrayBuffer();
@@ -248,10 +281,11 @@ export default function ModelListScreen() {
       Alert.alert("Error", "Failed to download PDF: " + error.message);
       console.error("Error downloading PDF:", error);
     } finally {
-      setIsDownloading(false);
+      if (showOverlay) setIsDownloading(false);
     }
   };
 
+  // PRINT
   const handlePrint = async () => {
     if (Platform.OS === "web") {
       Alert.alert("Info", "Printing not supported on web in this snippet.");
@@ -268,24 +302,27 @@ export default function ModelListScreen() {
     }
   };
 
+  // SEARCH
   const handleSearch = () => {
     if (Platform.OS !== "web" && pdfViewerRef.current) {
       pdfViewerRef.current.postMessage("focusSearch");
     } else {
-      Alert.alert("Search", "Please use the browser's find (Ctrl+F) feature.");
+      Alert.alert("Search", "Use the browser's find (Ctrl+F) feature.");
     }
   };
 
+  // INFO menu, HOME, QR code
   const toggleInfoMenu = () => setShowInfoMenu((prev) => !prev);
   const goToHome = () => {
     setShowInfoMenu(false);
     router.push("/home-screen");
   };
 
+  // Filter data based on search
   const filteredData = useMemo(() => {
-    return topFolders.reduce((acc, folderName) => {
-      const subData = subfolderData[folderName] || {};
-      const folderMatch = folderName
+    return topFolders.reduce((acc, folder) => {
+      const subData = subfolderData[folder.id] || {};
+      const folderMatch = folder.name
         .toLowerCase()
         .includes(searchQuery.toLowerCase());
       const filteredFiles =
@@ -293,12 +330,12 @@ export default function ModelListScreen() {
           ? subData.files.filter(
               (file) =>
                 file.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                file.path.toLowerCase().includes(searchQuery.toLowerCase())
+                file.id.toLowerCase().includes(searchQuery.toLowerCase())
             )
           : subData.files || [];
       if (folderMatch || filteredFiles.length > 0 || !searchQuery) {
         acc.push({
-          folderName,
+          ...folder,
           files: filteredFiles,
           loading: subData.loading,
         });
@@ -307,11 +344,13 @@ export default function ModelListScreen() {
     }, []);
   }, [topFolders, subfolderData, searchQuery]);
 
-  if (Platform.OS === "web" && selectedFileUrl) {
+  // ========== WEB PDF VIEWER (base64) ==========
+  if (Platform.OS === "web" && selectedPdfBase64) {
+    // Show pdf.js approach with left panel, search, etc.
     return (
       <View style={styles.viewerContainer}>
         <View style={styles.viewerHeader}>
-          <TouchableOpacity onPress={() => setSelectedFileUrl(null)}>
+          <TouchableOpacity onPress={() => setSelectedPdfBase64(null)}>
             <Image
               source={require("../../assets/icons/back.png")}
               style={styles.viewerIcon}
@@ -329,7 +368,7 @@ export default function ModelListScreen() {
               onPress={() =>
                 Alert.alert(
                   "Search",
-                  "Please use the browser's find (Ctrl+F) feature for search functionality."
+                  "Use the browser's find (Ctrl+F) feature."
                 )
               }
             >
@@ -341,13 +380,14 @@ export default function ModelListScreen() {
           </View>
         </View>
         <View style={{ flex: 1 }}>
-          <PdfViewer uri={selectedFileUrl} />
+          <PdfViewer ref={pdfViewerRef} base64Data={selectedPdfBase64} />
         </View>
       </View>
     );
   }
 
-  if (selectedPdfBase64) {
+  // ========== MOBILE PDF VIEWER (base64) ==========
+  if (selectedPdfBase64 && Platform.OS !== "web") {
     return (
       <View style={styles.viewerContainer}>
         <View style={styles.viewerHeader}>
@@ -380,9 +420,11 @@ export default function ModelListScreen() {
     );
   }
 
+  // ========== MAIN FOLDER/FILE LIST UI ==========
   return (
     <View style={styles.container}>
-      {isDownloading && (
+      {/* Show "Downloading PDF" overlay ONLY on mobile */}
+      {isDownloading && Platform.OS !== "web" && (
         <View style={styles.downloadOverlay}>
           <View style={styles.downloadBox}>
             <ActivityIndicator size="large" color="#fff" />
@@ -405,6 +447,7 @@ export default function ModelListScreen() {
           />
         </TouchableOpacity>
       </View>
+
       {showInfoMenu && (
         <View style={styles.infoMenu}>
           <Text style={styles.infoMenuTitle}>
@@ -427,6 +470,7 @@ export default function ModelListScreen() {
           </TouchableOpacity>
         </View>
       )}
+
       <View style={styles.searchContainer}>
         {!isOnline && (
           <Text style={{ color: "red", marginBottom: 5 }}>
@@ -440,6 +484,7 @@ export default function ModelListScreen() {
           onChangeText={setSearchQuery}
         />
       </View>
+
       {loadingRoot ? (
         <ActivityIndicator
           size="large"
@@ -449,16 +494,19 @@ export default function ModelListScreen() {
       ) : filteredData.length > 0 ? (
         <FlatList
           data={filteredData}
-          keyExtractor={(item) => item.folderName}
+          keyExtractor={(item) => item.id}
           initialNumToRender={5}
-          renderItem={({ item }) => (
-            <FolderItem
-              item={item}
-              isExpanded={expandedFolder === item.folderName}
-              onToggleFolder={handleToggleFolder}
-              onOpenFile={handleOpenFile}
-            />
-          )}
+          renderItem={({ item }) => {
+            const isExpanded = expandedFolder === item.id;
+            return (
+              <FolderItem
+                item={item}
+                isExpanded={isExpanded}
+                onToggleFolder={handleToggleFolder}
+                onOpenFile={handleOpenFile}
+              />
+            );
+          }}
         />
       ) : (
         <View style={styles.noMatchContainer}>
@@ -469,6 +517,7 @@ export default function ModelListScreen() {
           </Text>
         </View>
       )}
+
       <Modal
         visible={showQRCode}
         animationType="slide"
@@ -522,6 +571,7 @@ export default function ModelListScreen() {
   );
 }
 
+// ------------------ STYLES ------------------
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#EDEDED" },
   header: {
@@ -552,11 +602,7 @@ const styles = StyleSheet.create({
     marginBottom: 5,
     color: "#283593",
   },
-  infoMenuDescription: {
-    fontSize: 12,
-    color: "#666",
-    marginBottom: 10,
-  },
+  infoMenuDescription: { fontSize: 12, color: "#666", marginBottom: 10 },
   infoMenuButton: { paddingVertical: 5 },
   infoMenuButtonText: {
     fontSize: 14,
@@ -617,12 +663,7 @@ const styles = StyleSheet.create({
   },
   viewerTitle: { color: "#fff", fontSize: 18, fontWeight: "bold" },
   viewerActions: { flexDirection: "row" },
-  viewerIcon: {
-    width: 25,
-    height: 25,
-    tintColor: "#fff",
-    marginHorizontal: 8,
-  },
+  viewerIcon: { width: 25, height: 25, tintColor: "#fff", marginHorizontal: 8 },
   downloadOverlay: {
     position: "absolute",
     top: 0,
@@ -655,11 +696,7 @@ const styles = StyleSheet.create({
     padding: 20,
     alignItems: "center",
   },
-  qrHeader: {
-    fontWeight: "bold",
-    color: "#283593",
-    marginBottom: 15,
-  },
+  qrHeader: { fontWeight: "bold", color: "#283593", marginBottom: 15 },
   qrImage: { marginBottom: 15 },
   qrDescription: {
     color: "#333",

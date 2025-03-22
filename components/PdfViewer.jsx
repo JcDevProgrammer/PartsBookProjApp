@@ -17,9 +17,12 @@ const PdfViewer = forwardRef(({ base64Data, uri }, ref) => {
   const [html, setHtml] = useState(null);
 
   useEffect(() => {
-    if (Platform.OS === "web") return;
+    // Sa web, gagamitin natin ang base64 approach
+    if (Platform.OS === "web") {
+      return;
+    }
+    // Sa mobile, kung may base64Data, gagawa tayo ng custom HTML gamit ang pdf.js
     if (base64Data) {
-      // Gamitin ang default lazy-loading format (walang SinglePageMode)
       const customHtml = createPdfHtml(base64Data);
       setHtml(customHtml);
     }
@@ -34,8 +37,10 @@ const PdfViewer = forwardRef(({ base64Data, uri }, ref) => {
     },
   }));
 
+  // ========== WEB PLATFORM ==========
   if (Platform.OS === "web") {
     if (base64Data) {
+      // Gamitin ang pdf.js approach via base64
       return (
         <iframe
           src={"data:application/pdf;base64," + base64Data}
@@ -44,6 +49,7 @@ const PdfViewer = forwardRef(({ base64Data, uri }, ref) => {
         />
       );
     } else if (uri) {
+      // Kung gusto mo direct link => iframe
       return (
         <iframe
           src={uri}
@@ -56,7 +62,8 @@ const PdfViewer = forwardRef(({ base64Data, uri }, ref) => {
     }
   }
 
-  if (!base64Data || !html) {
+  // ========== MOBILE PLATFORM ==========
+  if (!base64Data && !uri) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#283593" />
@@ -64,6 +71,26 @@ const PdfViewer = forwardRef(({ base64Data, uri }, ref) => {
     );
   }
 
+  if (Platform.OS !== "web" && uri && !base64Data) {
+    return (
+      <WebView
+        originWhitelist={["*"]}
+        source={{ uri }}
+        style={styles.webview}
+        mixedContentMode="always"
+      />
+    );
+  }
+
+  if (!html) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#283593" />
+      </View>
+    );
+  }
+
+  // Kung may base64 => pdf.js HTML
   return (
     <WebView
       ref={webviewRef}
@@ -75,6 +102,7 @@ const PdfViewer = forwardRef(({ base64Data, uri }, ref) => {
   );
 });
 
+// Ito ang pdf.js HTML na may left panel, search, outline, etc.
 function createPdfHtml(base64) {
   const htmlLines = [
     "<!DOCTYPE html>",
@@ -84,59 +112,15 @@ function createPdfHtml(base64) {
     "  <style>",
     "    body { margin: 0; padding: 0; background: #ccc; font-family: sans-serif; }",
     "    #header {",
-    "      display: flex;",
-    "      align-items: center;",
-    "      height: 60px;",
-    "      background: #283593;",
-    "      color: #fff;",
-    "      position: fixed;",
-    "      top: 0;",
-    "      left: 0;",
-    "      right: 0;",
-    "      z-index: 1000;",
+    "      display: flex; align-items: center; height: 60px;",
+    "      background: #283593; color: #fff; position: fixed; top: 0; left: 0; right: 0; z-index: 1000;",
     "    }",
-    "    #searchContainer {",
-    "      flex: 1;",
-    "      display: flex;",
-    "      align-items: center;",
-    "      height: 100%;",
-    "      padding: 0 10px;",
-    "    }",
-    "    #searchInput {",
-    "      flex: 1;",
-    "      height: 40px;",
-    "      font-size: 16px;",
-    "      border: none;",
-    "      border-radius: 4px;",
-    "      padding-left: 10px;",
-    "      outline: none;",
-    "    }",
-    "    #searchButton {",
-    "      margin-left: 10px;",
-    "      height: 40px;",
-    "      padding: 0 16px;",
-    "      background: #fff;",
-    "      color: #283593;",
-    "      border: none;",
-    "      border-radius: 4px;",
-    "      cursor: pointer;",
-    "      display: flex;",
-    "      align-items: center;",
-    "      justify-content: center;",
-    "      font-size: 16px;",
-    "    }",
+    "    #searchContainer { flex: 1; display: flex; align-items: center; height: 100%; padding: 0 10px; }",
+    "    #searchInput { flex: 1; height: 40px; font-size: 16px; border: none; border-radius: 4px; padding-left: 10px; outline: none; }",
+    "    #searchButton { margin-left: 10px; height: 40px; padding: 0 16px; background: #fff; color: #283593; border: none; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; }",
     "    #searchButton:hover { background: #e0e0e0; }",
     "    #searchIcon { width: 20px; height: 20px; margin-right: 5px; }",
-    "    #outlinePanel {",
-    "      position: fixed;",
-    "      top: 60px;",
-    "      left: 0;",
-    "      width: 200px;",
-    "      height: calc(100% - 60px);",
-    "      background: #f0f0f0;",
-    "      overflow-y: auto;",
-    "      border-right: 1px solid #999;",
-    "    }",
+    "    #outlinePanel { position: fixed; top: 60px; left: 0; width: 200px; height: calc(100% - 60px); background: #f0f0f0; overflow-y: auto; border-right: 1px solid #999; }",
     "    #outlinePanel h3 { margin: 0; padding: 10px; background: #ccc; font-size: 14px; }",
     "    .outlineItem { padding: 8px 10px; border-bottom: 1px solid #ddd; cursor: pointer; }",
     "    .outlineItem:hover { background: #eee; }",
@@ -210,29 +194,9 @@ function createPdfHtml(base64) {
     "        });",
     "      });",
     "    }",
-    "    var observerOptions = {",
-    "      root: document.getElementById('viewerContainer'),",
-    "      threshold: 0.3,",
-    "      rootMargin: '100px 0px'",
-    "    };",
-    "    var observer = new IntersectionObserver(function(entries, observer) {",
-    "      entries.forEach(function(entry) {",
-    "        if (entry.isIntersecting) {",
-    "          var id = entry.target.id;",
-    "          var pageNum = parseInt(id.split('-')[1]);",
-    "          if (!entry.target.getAttribute('data-rendered')) {",
-    "            renderPage(pageNum);",
-    "            entry.target.setAttribute('data-rendered', 'true');",
-    "            observer.unobserve(entry.target);",
-    "          }",
-    "        }",
-    "      });",
-    "    }, observerOptions);",
-    "    pdfjsLib.getDocument({",
-    '      data: Uint8Array.from(atob("' +
-      base64 +
-      '"), function(c) { return c.charCodeAt(0); })',
-    "    }).promise.then(function(pdf) {",
+    `    pdfjsLib.getDocument({
+          data: Uint8Array.from(atob("${base64}"), function(c) { return c.charCodeAt(0); })
+        }).promise.then(function(pdf) {`,
     "      pdfDoc = pdf;",
     "      pageCount = pdf.numPages;",
     "      var viewerContainer = document.getElementById('viewerContainer');",
@@ -241,8 +205,25 @@ function createPdfHtml(base64) {
     '        pageContainer.className = "pageContainer";',
     '        pageContainer.id = "pageContainer-" + i;',
     "        viewerContainer.appendChild(pageContainer);",
-    "        observer.observe(pageContainer);",
     "      }",
+    "      var observer = new IntersectionObserver(function(entries, observer) {",
+    "        entries.forEach(function(entry) {",
+    "          if (entry.isIntersecting) {",
+    "            var id = entry.target.id;",
+    "            var pageNum = parseInt(id.split('-')[1]);",
+    "            if (!entry.target.getAttribute('data-rendered')) {",
+    "              renderPage(pageNum);",
+    "              entry.target.setAttribute('data-rendered', 'true');",
+    "              observer.unobserve(entry.target);",
+    "            }",
+    "          }",
+    "        });",
+    "      }, { root: viewerContainer, threshold: 0.1 });",
+    "      for (var i2 = 1; i2 <= pageCount; i2++) {",
+    '        var container2 = document.getElementById("pageContainer-" + i2);',
+    "        observer.observe(container2);",
+    "      }",
+    "      // Outline (bookmarks)",
     "      pdfDoc.getOutline().then(function(outline) {",
     "        if (!outline || !outline.length) {",
     '          document.getElementById("outlineItems").innerHTML = "<p>No Outline found.</p>";',
@@ -267,6 +248,7 @@ function createPdfHtml(base64) {
     "        });",
     "      });",
     "    });",
+    "    // SEARCH function",
     "    function searchInPDF() {",
     '      var term = document.getElementById("searchInput").value;',
     "      if (!term) {",
@@ -283,10 +265,10 @@ function createPdfHtml(base64) {
     "      var escaped = escapeRegExp(term);",
     '      var regex = new RegExp("(" + escaped + ")", "gi");',
     "      var firstMatch = null;",
-    "      for (var p2 = 1; p2 <= pageCount; p2++) {",
-    "        if (!pageTextDivs[p2]) continue;",
+    "      for (var p3 = 1; p3 <= pageCount; p3++) {",
+    "        if (!pageTextDivs[p3]) continue;",
     "        var pageMatched = false;",
-    "        pageTextDivs[p2].forEach(function(span) {",
+    "        pageTextDivs[p3].forEach(function(span) {",
     '          var originalText = span.getAttribute("data-original");',
     "          if (!originalText) {",
     "            originalText = span.textContent;",
@@ -301,10 +283,10 @@ function createPdfHtml(base64) {
     "          }",
     "        });",
     "        if (pageMatched && !firstMatch) {",
-    "          firstMatch = p2;",
-    "          var container = document.getElementById('pageContainer-' + p2);",
-    "          if (container) {",
-    "            container.scrollIntoView({ behavior: 'smooth' });",
+    "          firstMatch = p3;",
+    "          var container3 = document.getElementById('pageContainer-' + p3);",
+    "          if (container3) {",
+    "            container3.scrollIntoView({ behavior: 'smooth' });",
     "          }",
     "        }",
     "      }",
@@ -326,8 +308,15 @@ function createPdfHtml(base64) {
 }
 
 const styles = StyleSheet.create({
-  webview: { flex: 1, backgroundColor: "#fff" },
-  center: { flex: 1, justifyContent: "center", alignItems: "center" },
+  webview: {
+    flex: 1,
+    backgroundColor: "#fff",
+  },
+  center: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
 });
 
 export default PdfViewer;

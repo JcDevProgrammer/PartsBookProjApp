@@ -11,14 +11,12 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ref, listAll, getDownloadURL } from "firebase/storage";
-import { storage } from "../../src/config/firebaseConfig"; 
 
 export default function UserManualScreen() {
   const router = useRouter();
 
   const { model } = useLocalSearchParams();
   const selectedModel = model ? model : "";
-
 
   const sidebarCategories = [
     { id: "1", title: "Catalogue" },
