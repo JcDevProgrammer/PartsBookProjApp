@@ -17,10 +17,9 @@ const PdfViewer = forwardRef(({ base64Data, uri }, ref) => {
   const [html, setHtml] = useState(null);
 
   useEffect(() => {
-    if (Platform.OS === "web") {
-      return;
-    }
+    if (Platform.OS === "web") return;
     if (base64Data) {
+      // Gamitin ang default lazy-loading format (walang SinglePageMode)
       const customHtml = createPdfHtml(base64Data);
       setHtml(customHtml);
     }
@@ -57,14 +56,7 @@ const PdfViewer = forwardRef(({ base64Data, uri }, ref) => {
     }
   }
 
-  if (!base64Data) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#283593" />
-      </View>
-    );
-  }
-  if (!html) {
+  if (!base64Data || !html) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#283593" />
@@ -90,12 +82,7 @@ function createPdfHtml(base64) {
     "<head>",
     '  <meta charset="utf-8"/>',
     "  <style>",
-    "    body {",
-    "      margin: 0;",
-    "      padding: 0;",
-    "      background: #ccc;",
-    "      font-family: sans-serif;",
-    "    }",
+    "    body { margin: 0; padding: 0; background: #ccc; font-family: sans-serif; }",
     "    #header {",
     "      display: flex;",
     "      align-items: center;",
@@ -138,14 +125,8 @@ function createPdfHtml(base64) {
     "      justify-content: center;",
     "      font-size: 16px;",
     "    }",
-    "    #searchButton:hover {",
-    "      background: #e0e0e0;",
-    "    }",
-    "    #searchIcon {",
-    "      width: 20px;",
-    "      height: 20px;",
-    "      margin-right: 5px;",
-    "    }",
+    "    #searchButton:hover { background: #e0e0e0; }",
+    "    #searchIcon { width: 20px; height: 20px; margin-right: 5px; }",
     "    #outlinePanel {",
     "      position: fixed;",
     "      top: 60px;",
@@ -156,56 +137,15 @@ function createPdfHtml(base64) {
     "      overflow-y: auto;",
     "      border-right: 1px solid #999;",
     "    }",
-    "    #outlinePanel h3 {",
-    "      margin: 0;",
-    "      padding: 10px;",
-    "      background: #ccc;",
-    "      font-size: 14px;",
-    "    }",
-    "    .outlineItem {",
-    "      padding: 8px 10px;",
-    "      border-bottom: 1px solid #ddd;",
-    "      cursor: pointer;",
-    "    }",
-    "    .outlineItem:hover {",
-    "      background: #eee;",
-    "    }",
-    "    #viewerContainer {",
-    "      margin-left: 200px;",
-    "      margin-top: 60px;",
-    "      overflow-y: auto;",
-    "      height: calc(100% - 60px);",
-    "      padding: 10px;",
-    "    }",
-    "    .pageContainer {",
-    "      position: relative;",
-    "      margin: 10px auto;",
-    "      background: #fff;",
-    "      min-height: 400px;",
-    "    }",
-    "    .pageCanvas {",
-    "      display: block;",
-    "    }",
-    "    .textLayer {",
-    "      position: absolute;",
-    "      top: 0;",
-    "      left: 0;",
-    "      pointer-events: none;",
-    "      width: 100%;",
-    "      height: 100%;",
-    "    }",
-    "    .textLayer span {",
-    "      color: transparent;",
-    "      position: absolute;",
-    "      white-space: pre;",
-    "      line-height: 1;",
-    "    }",
-    "    .textLayer span.highlight {",
-    "      background-color: rgba(255, 255, 0, 0.3);",
-    "      color: transparent;",
-    "      border-radius: 2px;",
-    "      padding: 1px;",
-    "    }",
+    "    #outlinePanel h3 { margin: 0; padding: 10px; background: #ccc; font-size: 14px; }",
+    "    .outlineItem { padding: 8px 10px; border-bottom: 1px solid #ddd; cursor: pointer; }",
+    "    .outlineItem:hover { background: #eee; }",
+    "    #viewerContainer { margin-left: 200px; margin-top: 60px; overflow-y: auto; height: calc(100% - 60px); padding: 10px; }",
+    "    .pageContainer { position: relative; margin: 10px auto; background: #fff; min-height: 400px; }",
+    "    .pageCanvas { display: block; }",
+    "    .textLayer { position: absolute; top: 0; left: 0; pointer-events: none; width: 100%; height: 100%; }",
+    "    .textLayer span { color: transparent; position: absolute; white-space: pre; line-height: 1; }",
+    "    .textLayer span.highlight { background-color: rgba(255, 255, 0, 0.3); color: transparent; border-radius: 2px; padding: 1px; }",
     "  </style>",
     '  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>',
     '  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js"></script>',
@@ -270,6 +210,24 @@ function createPdfHtml(base64) {
     "        });",
     "      });",
     "    }",
+    "    var observerOptions = {",
+    "      root: document.getElementById('viewerContainer'),",
+    "      threshold: 0.3,",
+    "      rootMargin: '100px 0px'",
+    "    };",
+    "    var observer = new IntersectionObserver(function(entries, observer) {",
+    "      entries.forEach(function(entry) {",
+    "        if (entry.isIntersecting) {",
+    "          var id = entry.target.id;",
+    "          var pageNum = parseInt(id.split('-')[1]);",
+    "          if (!entry.target.getAttribute('data-rendered')) {",
+    "            renderPage(pageNum);",
+    "            entry.target.setAttribute('data-rendered', 'true');",
+    "            observer.unobserve(entry.target);",
+    "          }",
+    "        }",
+    "      });",
+    "    }, observerOptions);",
     "    pdfjsLib.getDocument({",
     '      data: Uint8Array.from(atob("' +
       base64 +
@@ -283,23 +241,7 @@ function createPdfHtml(base64) {
     '        pageContainer.className = "pageContainer";',
     '        pageContainer.id = "pageContainer-" + i;',
     "        viewerContainer.appendChild(pageContainer);",
-    "      }",
-    "      var observer = new IntersectionObserver(function(entries, observer) {",
-    "        entries.forEach(function(entry) {",
-    "          if (entry.isIntersecting) {",
-    "            var id = entry.target.id;",
-    "            var pageNum = parseInt(id.split('-')[1]);",
-    "            if (!entry.target.getAttribute('data-rendered')) {",
-    "              renderPage(pageNum);",
-    "              entry.target.setAttribute('data-rendered', 'true');",
-    "              observer.unobserve(entry.target);",
-    "            }",
-    "          }",
-    "        });",
-    "      }, { root: viewerContainer, threshold: 0.1 });",
-    "      for (var i = 1; i <= pageCount; i++) {",
-    '        var container = document.getElementById("pageContainer-" + i);',
-    "        observer.observe(container);",
+    "        observer.observe(pageContainer);",
     "      }",
     "      pdfDoc.getOutline().then(function(outline) {",
     "        if (!outline || !outline.length) {",
@@ -384,15 +326,8 @@ function createPdfHtml(base64) {
 }
 
 const styles = StyleSheet.create({
-  webview: {
-    flex: 1,
-    backgroundColor: "#fff",
-  },
-  center: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
+  webview: { flex: 1, backgroundColor: "#fff" },
+  center: { flex: 1, justifyContent: "center", alignItems: "center" },
 });
 
 export default PdfViewer;

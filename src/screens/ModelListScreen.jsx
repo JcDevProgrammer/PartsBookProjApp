@@ -94,6 +94,19 @@ export default function ModelListScreen() {
     return () => unsubscribe();
   }, [isOnline]);
 
+  // Polling mechanism: refresh folders and expanded folder contents every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (isOnline) {
+        fetchTopLevelFolders();
+        if (expandedFolder) {
+          fetchSubfolderContents(expandedFolder);
+        }
+      }
+    }, 30000); // 30 seconds; adjust as needed
+    return () => clearInterval(interval);
+  }, [isOnline, expandedFolder]);
+
   const fetchTopLevelFolders = async () => {
     try {
       setLoadingRoot(true);
@@ -456,7 +469,6 @@ export default function ModelListScreen() {
           </Text>
         </View>
       )}
-      {}
       <Modal
         visible={showQRCode}
         animationType="slide"
